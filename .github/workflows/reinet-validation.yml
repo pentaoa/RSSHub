@@ -1,0 +1,51 @@
+name: Reinet live route validation
+on: workflow_dispatch
+permissions:
+  contents: read
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: feat/reinet-publications
+          fetch-depth: 2
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - run: npm install -g pnpm@10.34.6
+      - run: pnpm install --frozen-lockfile
+      - name: Scoped formatting and lint
+        run: |
+          pnpm exec oxfmt lib/routes/reinet --check
+          pnpm exec oxlint --type-aware lib/routes/reinet
+          pnpm exec eslint lib/routes/reinet --concurrency auto
+      - run: pnpm build:routes
+      - run: pnpm typecheck
+      - name: Live route response
+        env:
+          NODE_ENV: dev
+          CACHE_TYPE: memory
+        run: |
+          cat > validate-reinet.ts <<'EOF'
+          import assert from 'node:assert/strict';
+          import { init, request } from './lib/pkg';
+          await init({ CACHE_TYPE: 'memory', REQUEST_TIMEOUT: '30000' });
+          const data = await request('/reinet/publications');
+          assert.ok(data.item.length > 0, 'feed must contain public announcements');
+          assert.equal(new Set(data.item.map(item => item.link)).size, data.item.length, 'item links must be unique');
+          for (const item of data.item) {
+              assert.ok(item.title);
+              assert.ok(item.description && item.description.length > 20, 'full announcement content must be present');
+              assert.ok(item.link?.startsWith('https://www.reinet.or.jp/'));
+              assert.ok(Number.isFinite(Date.parse(String(item.pubDate))), 'publication date must be valid');
+              assert.equal(new Date(String(item.pubDate)).getUTCHours(), 15, 'Japan midnight must map to 15:00 UTC');
+          }
+          assert.ok(data.item.some(item => item.description?.includes('.pdf')), 'public PDF links must be included');
+          console.log(JSON.stringify({ count: data.item.length, title: data.title, first: { title: data.item[0].title, link: data.item[0].link, date: data.item[0].pubDate } }, null, 2));
+          const limited = await request('/reinet/publications?limit=3');
+          assert.equal(limited.item.length, 3, 'common limit parameter must apply');
+          console.log('Full content, unique links, JST dates, public PDF links and limit=3: passed');
+          process.exit(0);
+          EOF
+          pnpm exec tsx validate-reinet.ts

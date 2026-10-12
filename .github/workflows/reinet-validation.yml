@@ -33,6 +33,7 @@ jobs:
           await init({ CACHE_TYPE: 'memory', REQUEST_TIMEOUT: '30000' });
           const data = await request('/reinet/publications');
           assert.ok(data.item.length > 0, 'feed must contain public announcements');
+          assert.equal(data.item.length, 20, 'default feed must fetch only the latest 20 entries');
           assert.equal(new Set(data.item.map(item => item.link)).size, data.item.length, 'item links must be unique');
           for (const item of data.item) {
               assert.ok(item.title);
